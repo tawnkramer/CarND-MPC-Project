@@ -6,8 +6,9 @@
 using CppAD::AD;
 
 // Set the timestep length and duration
-size_t N = 25;
-double dt = 0.05;
+//Too large and we spend too much time looking into the future.
+//with 0.1 time step this is one second into the future.
+size_t N = 10;
 
 // This value assumes the model presented in the classroom is used.
 //
@@ -21,13 +22,12 @@ double dt = 0.05;
 // This is the length from front to CoG that has a similar radius.
 const double Lf = 2.67;
 
-// Both the reference cross track and orientation errors are 0.
-// The reference velocity is set to 40 mph.
-double ref_v = 40;
+double ref_cte = 0;
+double ref_epsi = 0;
 
 // The solver takes all the state variables and actuator
 // variables in a singular vector. Thus, we should to establish
-// when one variable starts and another ends to make our lifes easier.
+// when one variable starts and another ends to make our life easier.
 size_t x_start = 0;
 size_t y_start = x_start + N;
 size_t psi_start = y_start + N;
@@ -41,33 +41,43 @@ class FG_eval {
  public:
   // Fitted polynomial coefficients
   Eigen::VectorXd coeffs;
-  FG_eval(Eigen::VectorXd coeffs) { this->coeffs = coeffs; }
+  double ref_v;
+  double dt;
+
+  FG_eval(Eigen::VectorXd coeffs, double desired_vel, double latency) 
+  {
+    //we are assuming a third order polynomial
+    assert(coeffs.size() == 4);
+    this->coeffs = coeffs; 
+    this->ref_v = desired_vel;
+    this->dt = latency;
+  }
 
   typedef CPPAD_TESTVECTOR(AD<double>) ADvector;
   void operator()(ADvector& fg, const ADvector& vars) {
     // `fg` a vector of the cost constraints, `vars` is a vector of variable values (state & actuators)
 
-        // The cost is stored is the first element of `fg`.
+    // The cost is stored is the first element of `fg`.
     // Any additions to the cost should be added to `fg[0]`.
     fg[0] = 0;
 
     // The part of the cost based on the reference state.
     for (int t = 0; t < N; t++) {
-      fg[0] += CppAD::pow(vars[cte_start + t], 2);
-      fg[0] += CppAD::pow(vars[epsi_start + t], 2);
+      fg[0] += 2000 * CppAD::pow(vars[cte_start + t] - ref_cte, 2);
+      fg[0] += 2000 * CppAD::pow(vars[epsi_start + t] - ref_epsi, 2);
       fg[0] += CppAD::pow(vars[v_start + t] - ref_v, 2);
     }
 
     // Minimize the use of actuators.
     for (int t = 0; t < N - 1; t++) {
-      fg[0] += CppAD::pow(vars[delta_start + t], 2);
-      fg[0] += CppAD::pow(vars[a_start + t], 2);
+      fg[0] += 5 * CppAD::pow(vars[delta_start + t], 2);
+      fg[0] += 5 * CppAD::pow(vars[a_start + t], 2);
     }
 
     // Minimize the value gap between sequential actuations.
     for (int t = 0; t < N - 2; t++) {
-      fg[0] += CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
-      fg[0] += CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
+      fg[0] += 200 * CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
+      fg[0] += 10 * CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
     }
 
     //
@@ -109,8 +119,9 @@ class FG_eval {
       AD<double> delta0 = vars[delta_start + t - 1];
       AD<double> a0 = vars[a_start + t - 1];
 
-      AD<double> f0 = coeffs[0] + coeffs[1] * x0;
-      AD<double> psides0 = CppAD::atan(coeffs[1]);
+      //assumes a third order polynomial passed in..
+      AD<double> f0 = coeffs[0] + coeffs[1] * x0  + coeffs[2] * x0 * x0  + coeffs[3] * x0 * x0 * x0;
+      AD<double> psides0 = CppAD::atan(3 * coeffs[3] * x0 * x0 + 2 * coeffs[2] * x0 + coeffs[1]);
 
       // Here's `x` to get you started.
       // The idea here is to constraint this value to be 0.
@@ -126,10 +137,8 @@ class FG_eval {
       fg[1 + y_start + t] = y1 - (y0 + v0 * CppAD::sin(psi0) * dt);
       fg[1 + psi_start + t] = psi1 - (psi0 + v0 * delta0 / Lf * dt);
       fg[1 + v_start + t] = v1 - (v0 + a0 * dt);
-      fg[1 + cte_start + t] =
-          cte1 - ((f0 - y0) + (v0 * CppAD::sin(epsi0) * dt));
-      fg[1 + epsi_start + t] =
-          epsi1 - ((psi0 - psides0) + v0 * delta0 / Lf * dt);
+      fg[1 + cte_start + t] = cte1 - ((f0 - y0) + (v0 * CppAD::sin(epsi0) * dt));
+      fg[1 + epsi_start + t] = epsi1 - ((psi0 - psides0) - v0 * delta0 / Lf * dt);
     }
   }
 };
@@ -188,8 +197,8 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   // The upper and lower limits of delta are set to -25 and 25
   // degrees (values in radians).
   for (int i = delta_start; i < a_start; i++) {
-    vars_lowerbound[i] = -0.436332;
-    vars_upperbound[i] = 0.436332;
+    vars_lowerbound[i] = -0.436332*Lf;
+    vars_upperbound[i] = 0.436332*Lf;
   }
 
   // Acceleration/decceleration upper and lower limits.
@@ -207,6 +216,7 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
     constraints_upperbound[i] = 0;
   }
 
+  //Tell the solver to set the initial state to our init values
   constraints_lowerbound[x_start] = x;
   constraints_lowerbound[y_start] = y;
   constraints_lowerbound[psi_start] = psi;
@@ -222,7 +232,7 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   constraints_upperbound[epsi_start] = epsi;
 
   // object that computes objective and constraints
-  FG_eval fg_eval(coeffs);
+  FG_eval fg_eval(coeffs, m_DesiredVel_MPH, m_ControlLatency_Sec);
 
   // options for IPOPT solver
   std::string options;
@@ -254,8 +264,16 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   auto cost = solution.obj_value;
   std::cout << "Cost " << cost << std::endl;
 
-  return {solution.x[x_start + 1],   solution.x[y_start + 1],
-          solution.x[psi_start + 1], solution.x[v_start + 1],
-          solution.x[cte_start + 1], solution.x[epsi_start + 1],
-          solution.x[delta_start],   solution.x[a_start]};
+  vector<double> result;
+
+  result.push_back(solution.x[delta_start]); //our best guess as steering
+  result.push_back(solution.x[a_start]); //our best guess as accelleration
+
+  for(int i = 0; i < N-1; i++)
+  {
+      result.push_back(solution.x[x_start + i + 1]);
+      result.push_back(solution.x[y_start + i + 1]);
+  }
+
+  return result;
 }
