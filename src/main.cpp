@@ -41,6 +41,15 @@ double polyeval(Eigen::VectorXd coeffs, double x) {
   return result;
 }
 
+// Evaluate a derivative of polynomial
+double polyeval_deriv(Eigen::VectorXd coeffs, double x) {
+  double result = 0.0;
+  for (int i = 1; i < coeffs.size(); i++) {
+    result += coeffs[i] * i * pow(x, i-1);
+  }
+  return result;
+}
+
 // Fit a polynomial.
 // Adapted from
 // https://github.com/JuliaMath/Polynomials.jl/blob/master/src/Polynomials.jl#L676-L716
@@ -71,6 +80,9 @@ int main() {
   // MPC is initialized here!
   MPC mpc;
 
+  //mpc.set_velocity(45.0);
+  //mpc.set_latency(0.1);
+
   h.onMessage([&mpc](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
@@ -98,8 +110,28 @@ int main() {
           * Both are in between [-1, 1].
           *
           */
-          double steer_value;
-          double throttle_value;
+
+          Eigen::VectorXd ptsx_car_frame (ptsx.size());
+          Eigen::VectorXd ptsy_car_frame (ptsy.size());
+          for (int i=0; i<ptsx.size(); i++) {
+            double x = ptsx[i] - px;
+            double y = ptsy[i] - py;
+            ptsx_car_frame [i] = x * cos (psi) + y * sin (psi);
+            ptsy_car_frame [i] = - x * sin (psi) + y * cos (psi);
+          }
+
+          auto coeffs = polyfit(ptsx_car_frame, ptsy_car_frame, 3);
+
+          // in car frame coords of the car is (0, 0) with psi == 0
+          double cte = polyeval (coeffs, 0);
+          double epsi = atan(polyeval_deriv (coeffs, 0));
+
+          Eigen::VectorXd state(6);
+          state << 0, 0, 0, v, cte, epsi;
+
+          auto control_values = mpc.Solve(state, coeffs);
+          double steer_value = -control_values [6];
+          double throttle_value = control_values [7];
 
           json msgJson;
           // NOTE: Remember to divide by deg2rad(25) before you send the steering value back.
