@@ -85,7 +85,7 @@ int main() {
   // MPC is initialized here!
   MPC mpc;
 
-  mpc.SetDesiredVel_MPH(45.0);
+  mpc.SetDesiredVel_MPH(60.0);
   mpc.SetControlLatency_Sec(0.1);
 
   h.onMessage([&mpc](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
@@ -94,7 +94,7 @@ int main() {
     // The 4 signifies a websocket message
     // The 2 signifies a websocket event
     string sdata = string(data).substr(0, length);
-    cout << sdata << endl;
+    //cout << sdata << endl;
     if (sdata.size() > 2 && sdata[0] == '4' && sdata[1] == '2') {
       string s = hasData(sdata);
       if (s != "") {
@@ -144,7 +144,7 @@ int main() {
           auto vars = mpc.Solve(state, coeffs);
 
           double Lf = 2.67;
-          double steer_value = vars [0] / deg2rad(25) * Lf;
+          double steer_value = -vars [0] / deg2rad(25) * Lf;
           double throttle_value = vars [1];
 
           json msgJson;
@@ -196,7 +196,7 @@ int main() {
 
 
           auto msg = "42[\"steer\"," + msgJson.dump() + "]";
-          std::cout << msg << std::endl;
+          //std::cout << msg << std::endl;
           // Latency
           // The purpose is to mimic real driving conditions where
           // the car does actuate the commands instantly.
@@ -206,7 +206,7 @@ int main() {
           //
           // NOTE: REMEMBER TO SET THIS TO 100 MILLISECONDS BEFORE
           // SUBMITTING.
-          this_thread::sleep_for(chrono::milliseconds(100));
+          //this_thread::sleep_for(chrono::milliseconds(100));
           ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
         }
       } else {
