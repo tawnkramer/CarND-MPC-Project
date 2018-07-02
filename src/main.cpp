@@ -83,10 +83,15 @@ int main() {
   uWS::Hub h;
 
   // MPC is initialized here!
-  MPC mpc;
+  int lookAheadIter = 12;
+  double lookAheadDt = 0.05;
+
+  MPC mpc(lookAheadIter, lookAheadDt);
 
   mpc.SetDesiredVel_MPH(60.0);
   mpc.SetControlLatency_Sec(0.1);
+  mpc.SetAccelLimits(1.0, -1);
+  mpc.SetSteeringLimitAngle_rad(deg2rad(25.0));
 
   h.onMessage([&mpc](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
@@ -206,7 +211,7 @@ int main() {
           //
           // NOTE: REMEMBER TO SET THIS TO 100 MILLISECONDS BEFORE
           // SUBMITTING.
-          //this_thread::sleep_for(chrono::milliseconds(100));
+          this_thread::sleep_for(chrono::milliseconds(100));
           ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
         }
       } else {
