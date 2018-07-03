@@ -89,7 +89,7 @@ int main() {
   MPC mpc(lookAheadIter, lookAheadDt);
 
   mpc.SetDesiredVel_MPH(60.0);
-  mpc.SetControlLatency_Sec(0.15);
+  mpc.SetControlLatency_Sec(0.1);
   mpc.SetAccelLimits(1, -1);
   double steer_limit_rad = deg2rad(25.0);
   mpc.SetSteeringLimitAngle_rad(steer_limit_rad);

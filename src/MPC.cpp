@@ -245,6 +245,7 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
 
   //Modulate the desired speed depending on our cross track error.
   //Speed up as the cte goes to zero, and slow down as the cte increases.
+  //This could be improved to use the entire CTE over the whole path.
   double max_offset = 10.0;
   double max_cte = 1.0;
   double eff_cte = std::min(cte, max_cte);
