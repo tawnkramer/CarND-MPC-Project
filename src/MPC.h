@@ -22,6 +22,8 @@ class MPC {
     m_AccelUpperLimit = upperLimit;
     m_AccelLowerLimit = lowerLimit;
   }
+  int GetIterationsLatency();
+
 
   double  m_DesiredVel_MPH;
   double  m_ControlLatency_Sec;
@@ -30,12 +32,13 @@ class MPC {
   double  m_SteerLimit_Rad;
   double  m_AccelUpperLimit;
   double  m_AccelLowerLimit;
+  double  m_PrevSteer;
+  double  m_PrevThrottle;
 
   // Solve the model given an initial state and polynomial coefficients.
   // Return the first actuatotions.
   vector<double> Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs);
 
-  double prev_actuations[2];
 
   size_t x_start;
   size_t y_start;

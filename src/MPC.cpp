@@ -9,20 +9,17 @@ class FG_eval {
  public:
   // Fitted polynomial coefficients
   Eigen::VectorXd coeffs;
-  double ref_v;
-  double dt;
   MPC& mpc;
+  double dt;
+  double target_vel;
 
   FG_eval(Eigen::VectorXd coeffs, 
-    double desired_vel, 
-    double latency,
-    MPC& _mpc) : mpc(_mpc) 
+    MPC& _mpc, 
+    double target_vel) : coeffs(coeffs), mpc(_mpc), target_vel(target_vel) 
   {
     //we are assuming a third order polynomial
     assert(coeffs.size() == 4);
-    this->coeffs = coeffs; 
-    this->ref_v = desired_vel;
-    this->dt = latency;
+    this->dt = mpc.m_LookAheadDt_Sec;
   }
 
   typedef CPPAD_TESTVECTOR(AD<double>) ADvector;
@@ -33,25 +30,22 @@ class FG_eval {
     // Any additions to the cost should be added to `fg[0]`.
     fg[0] = 0;
 
-    double ref_cte = 0;
-    double ref_epsi = 0;
-
     // The part of the cost based on the reference state.
     for (int t = 0; t < mpc.m_LookAheadIter; t++) {
-      fg[0] += 2000 * CppAD::pow(vars[mpc.cte_start + t] - ref_cte, 2);
-      fg[0] += 2000 * CppAD::pow(vars[mpc.epsi_start + t] - ref_epsi, 2);
-      fg[0] += CppAD::pow(vars[mpc.v_start + t] - ref_v, 2);
+      fg[0] += CppAD::pow(vars[mpc.cte_start + t], 2);
+      fg[0] += CppAD::pow(vars[mpc.epsi_start + t], 2);
+      fg[0] += CppAD::pow(vars[mpc.v_start + t] - target_vel, 2);
     }
 
     // Minimize the use of actuators.
-    for (int t = 0; t < mpc.m_LookAheadIter - 1; t++) {
-      fg[0] += 5 * CppAD::pow(vars[mpc.delta_start + t], 2);
-      fg[0] += 5 * CppAD::pow(vars[mpc.a_start + t], 2);
+    for (int t = 1; t < mpc.m_LookAheadIter - 1; t++) {
+      fg[0] += 100 * CppAD::pow(vars[mpc.delta_start + t], 2);
+      fg[0] += CppAD::pow(vars[mpc.a_start + t], 2);
     }
 
     // Minimize the value gap between sequential actuations.
-    for (int t = 0; t < mpc.m_LookAheadIter - 2; t++) {
-      fg[0] += 200 * CppAD::pow(vars[mpc.delta_start + t + 1] - vars[mpc.delta_start + t], 2);
+    for (int t = 1; t < mpc.m_LookAheadIter - 2; t++) {
+      fg[0] += 1000 * CppAD::pow(vars[mpc.delta_start + t + 1] - vars[mpc.delta_start + t], 2);
       fg[0] += 10 * CppAD::pow(vars[mpc.a_start + t + 1] - vars[mpc.a_start + t], 2);
     }
 
@@ -126,14 +120,14 @@ MPC::MPC(int lookaheadIter, double lookaheadDt)
   SetLookAheadIter(lookaheadIter);
   SetLookAheadDt(lookaheadDt);
 
-  //Reasonable defaults
-  m_DesiredVel_MPH = 30;
-  m_ControlLatency_Sec = 0.1;
-  m_LookAheadIter = 10;
-  m_LookAheadDt_Sec = 0.5;
+  //Reset vars
+  m_DesiredVel_MPH = 0;
+  m_ControlLatency_Sec = 0.0;
   m_SteerLimit_Rad = 0.5;
   m_AccelUpperLimit = 1;
   m_AccelLowerLimit = -1;
+  m_PrevSteer = 0;
+  m_PrevThrottle = 0;
 
   // The solver takes all the state variables and actuator
   // variables in a singular vector. Thus, we should to establish
@@ -155,7 +149,6 @@ MPC::~MPC() {}
 
 vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   bool ok = true;
-  size_t i;
   typedef CPPAD_TESTVECTOR(double) Dvector;
 
   double x = state[0];
@@ -165,6 +158,7 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   double cte = state[4];
   double epsi = state[5];
 
+  //six vars as shown above
   const int num_vars_state = 6;
 
   // number of independent variables
@@ -178,11 +172,9 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   // SHOULD BE 0 besides initial state.
   Dvector vars(n_vars);
   for (int i = 0; i < n_vars; i++) 
-  {
     vars[i] = 0;
-  }
 
-// Set the initial variable values
+  // Set the initial variable values
   vars[x_start] = x;
   vars[y_start] = y;
   vars[psi_start] = psi;
@@ -214,17 +206,17 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
     vars_upperbound[i] = m_AccelUpperLimit;
   }
 
-  // to handle delay before we actually may control the car
-  // we need to freeze control commands with previous values
-  // during latency delay
-  double latency_ = m_ControlLatency_Sec;
-  double dt = 0.1;
-  int num_iter_delayed = int(std::ceil(latency_ / dt));
-  for (int i=0; i < num_iter_delayed; i++) {
-    vars_lowerbound [delta_start + i] = prev_actuations [0];
-    vars_upperbound [delta_start + i] = prev_actuations [0];
-    vars_lowerbound [a_start + i] = prev_actuations [1];
-    vars_upperbound [a_start + i] = prev_actuations [1];
+  // We will account for the latency by asserting the constraint
+  // that the steering and throttle will remain at their previous values
+  // for as long as we predict the latency to last.
+  int num_iter_latency = GetIterationsLatency();
+
+  for (int i=0; i < num_iter_latency; i++) 
+  {
+    vars_lowerbound [delta_start + i] = m_PrevSteer;
+    vars_upperbound [delta_start + i] = m_PrevSteer;
+    vars_lowerbound [a_start + i] = m_PrevThrottle;
+    vars_upperbound [a_start + i] = m_PrevThrottle;
   }
 
   // Lower and upper limits for the constraints
@@ -251,8 +243,16 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   constraints_upperbound[cte_start] = cte;
   constraints_upperbound[epsi_start] = epsi;
 
+  //Modulate the desired speed depending on our cross track error.
+  //Speed up as the cte goes to zero, and slow down as the cte increases.
+  double max_offset = 10.0;
+  double max_cte = 1.0;
+  double eff_cte = std::min(cte, max_cte);
+  double offset_vel = 2.0 * max_offset * (1.0 - (eff_cte / max_cte)) - max_offset;
+  double target_vel = m_DesiredVel_MPH + offset_vel;
+
   // object that computes objective and constraints
-  FG_eval fg_eval(coeffs, m_DesiredVel_MPH, m_ControlLatency_Sec, *this);
+  FG_eval fg_eval(coeffs, *this, target_vel);
 
   // options for IPOPT solver
   std::string options;
@@ -281,26 +281,37 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   ok &= solution.status == CppAD::ipopt::solve_result<Dvector>::success;
 
   // Cost
-  auto cost = solution.obj_value;
+  //auto cost = solution.obj_value;
   //std::cout << "Cost " << cost << std::endl;
 
   vector<double> result;
 
-  double steering = solution.x[delta_start + num_iter_delayed];
-  double throttle = solution.x[a_start + num_iter_delayed];
+  double steering = solution.x[delta_start + num_iter_latency];
+  double throttle = solution.x[a_start + num_iter_latency];
 
-  //remember our last command,s
-  prev_actuations [0] = steering;
-  prev_actuations [1] = throttle;
+  //remember our last commands
+  m_PrevSteer = steering;
+  m_PrevThrottle = throttle;
 
-  result.push_back(steering / 0.436332); //our best guess as steering
+  //transform steering angle back into sim space
+  steering = -steering / m_SteerLimit_Rad;
+
+  result.push_back(steering); //our best guess as steering
   result.push_back(throttle); //our best guess as accelleration
 
-  for(int i = 0; i < m_LookAheadIter-1; i++)
+  for(int i = 1; i < m_LookAheadIter; i++)
   {
-      result.push_back(solution.x[x_start + i + 1]);
-      result.push_back(solution.x[y_start + i + 1]);
+      result.push_back(solution.x[x_start + i]);
+      result.push_back(solution.x[y_start + i]);
   }
 
   return result;
+}
+
+int MPC::GetIterationsLatency()
+{
+  // We will account for the latency by asserting the constraint
+  // that the steering and throttle will remain at their previous values
+  // for as long as we predict the latency to last.
+  return int(std::ceil(m_ControlLatency_Sec / m_LookAheadDt_Sec));
 }

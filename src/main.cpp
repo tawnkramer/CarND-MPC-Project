@@ -83,15 +83,16 @@ int main() {
   uWS::Hub h;
 
   // MPC is initialized here!
-  int lookAheadIter = 12;
+  int lookAheadIter = 15;
   double lookAheadDt = 0.05;
 
   MPC mpc(lookAheadIter, lookAheadDt);
 
   mpc.SetDesiredVel_MPH(60.0);
-  mpc.SetControlLatency_Sec(0.1);
-  mpc.SetAccelLimits(1.0, -1);
-  mpc.SetSteeringLimitAngle_rad(deg2rad(25.0));
+  mpc.SetControlLatency_Sec(0.15);
+  mpc.SetAccelLimits(1, -1);
+  double steer_limit_rad = deg2rad(25.0);
+  mpc.SetSteeringLimitAngle_rad(steer_limit_rad);
 
   h.onMessage([&mpc](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length,
                      uWS::OpCode opCode) {
@@ -118,27 +119,31 @@ int main() {
           //and the path extends along the x axis. This helps with the fit function because we have one and only
           //one value for y for every x. And the starting rotation is also zero - straight down the x axis.
           //Will help MPC evaluation and cross track error.
+          vector<double> pos_x(ptsx.size());
+          vector<double> pos_y(ptsx.size());
           for (int i=0; i<ptsx.size(); i++) {
             double shift_x = ptsx[i] - px;
             double shift_y = ptsy[i] - py;
 
-            ptsx[i] = shift_x * cos (0-psi) - shift_y * sin (0-psi);
-            ptsy[i] = shift_x * sin (0-psi) + shift_y * cos (0-psi);
+            pos_x[i] = shift_x * cos (-psi) - shift_y * sin (-psi);
+            pos_y[i] = shift_x * sin (-psi) + shift_y * cos (-psi);
           }
 
-          double* ptrx = &ptsx[0];
-          Eigen::Map<Eigen::VectorXd> ptsx_transform(ptrx, 6);
+          double* ptrx = &pos_x[0];
+          Eigen::Map<Eigen::VectorXd> ptsx_transform(ptrx, pos_x.size());
 
-          double* ptry = &ptsy[0];
-          Eigen::Map<Eigen::VectorXd> ptsy_transform(ptry, 6);
+          double* ptry = &pos_y[0];
+          Eigen::Map<Eigen::VectorXd> ptsy_transform(ptry, pos_y.size());
 
           const int order_polynimial = 3;
           auto coeffs = polyfit(ptsx_transform, ptsy_transform, order_polynimial);
 
           // in car frame coords of the car is (0, 0) with psi == 0
-          double cte = polyeval (coeffs, 0);
+          double cte = polyeval(coeffs, 0);
+
           //full epsi can be simplified because psi is zero and px is zero
           //epsi = psi - atan(coeff[1] + 2 * px * coeffs[2] + 3 coeffs[3] * pow(px, 2))
+          //double epsi = atan(polyeval_deriv (coeffs, 0));
           double epsi = -atan(coeffs[1]);
 
           Eigen::VectorXd state(6);
@@ -148,8 +153,7 @@ int main() {
 
           auto vars = mpc.Solve(state, coeffs);
 
-          double Lf = 2.67;
-          double steer_value = -vars [0] / deg2rad(25) * Lf;
+          double steer_value = vars [0];
           double throttle_value = vars [1];
 
           json msgJson;
@@ -165,6 +169,7 @@ int main() {
 
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Green line
+          //skip the first two vars which are our solution steering and throttle
           for(int i = 2; i < vars.size(); i++)
           {
               if(i % 2 == 0)
@@ -187,13 +192,13 @@ int main() {
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Yellow line
 
-          double poly_inc = 2.5;
-          double num_points = 25;
+          double num_points = mpc.m_LookAheadIter;
 
           for(int i = 1; i < num_points; i++)
           {
-              next_x_vals.push_back(poly_inc * i);
-              next_y_vals.push_back(polyeval(coeffs, poly_inc * i));
+              double x_val = i * 5;
+              next_x_vals.push_back(x_val);
+              next_y_vals.push_back(polyeval(coeffs, x_val));
           }
 
           msgJson["next_x"] = next_x_vals;
