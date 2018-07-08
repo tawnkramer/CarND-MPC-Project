@@ -2,7 +2,7 @@
 Self-Driving Car Engineer Nanodegree Program
 
 
-### This project uses simplified equations of motion to predict vehicle dynamics through time. This state update calculation is implemented in the context of an iterative solver that seeks to minimize an arbitrary cost function. This cost function combines factors to encourage reduced steering and acceleration changes to accomplish the smoothest, smallest actuator changes to maintain comfortable, safe driving through the waypoints.
+#### This project uses simplified equations of motion to predict vehicle dynamics through time. This state update calculation is implemented in the context of an iterative solver that seeks to minimize an arbitrary cost function. This cost function combines factors to encourage reduced steering and acceleration changes to accomplish the smoothest, smallest actuator changes to maintain comfortable, safe driving through the waypoints.
 
 ---
 
