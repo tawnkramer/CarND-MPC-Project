@@ -1,12 +1,14 @@
 # CarND-Controls-MPC
 Self-Driving Car Engineer Nanodegree Program
 
+
+This project uses simplified equations of motion to predict vehicle dynamics through time. This state update calculation is implemented in the context of an iterative solver that seeks to minimize an arbitrary cost function. This cost function combines factors to encourage reduced steering and acceleration changes to accomplish the smoothest, smallest actuator changes to maintain comfortable, safe driving through the waypoints.
+
 ---
+
 ## Model
 
-This project uses the simplified equations of motion to predict the vehicle dynamics through time. This forward simulation is implemented in the context of an iterative solver that seeks to minimize an arbitrary cost function. This cost function combines factors to encourage reduced steering and acceleration changes to accomplish the smoothest, smallest steering change to maintain smooth safe driving through the waypoints.
-
-The equations of motion are:
+The equations representing the model of motion are:
 
 ```
 x_[t+1] = x[t] + v[t] * cos(psi[t]) * dt
@@ -18,9 +20,10 @@ epsi[t+1] = psi[t] - psides[t] + v[t] * delta[t] / Lf * dt
 ```
 
 Where x, y are the 2D translation coordinates, psi is the steering angle, v is the velocity, cte is the cross track error, and espi is the speed error.
-Lf is the length from front to CoG that has a similar radius, which was tuned until the the radius formed by the simulating the model presented in the classroom matched the previous radius.
+Lf is the length from front to CoG that has a similar radius, which was tuned until the the radius formed by the simulating the model presented in the classroom matched the previous radius. T is the current time step, where t + 1 is the next time step.
 
 This model ignores tire, aerodynamic, friction, and steering play dynamics. But as the model is simple, has fewer hyperparemeters which may be mis-estimated, and performs well in real time. As only the first control step is used on any time frame, the long term simulation accuracy is less important.
+
 
 ## Predictive
 
@@ -35,7 +38,7 @@ The [IPOPT](https://www.coin-or.org/download/source/Ipopt/Ipopt-3.12.7.zip) opti
 
 ![gif](mpc_results.gif)
 
-Yellow line is a 3rd order polynomial fit through the waypoint lines. The green line plots the N simulated time steps indicicating the results of the solver.
+Yellow line is a 3rd order polynomial fit through the waypoint lines. The green line plots the N simulated time steps indicating the results of the solver.
 
 ----
 
