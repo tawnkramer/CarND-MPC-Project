@@ -82,17 +82,18 @@ Eigen::VectorXd polyfit(Eigen::VectorXd xvals, Eigen::VectorXd yvals,
 
 void show_usage()
 {
-    printf("Usage: mpc_zmq [--port <int>] [--iter <int>] [--dt <float>] [--mph <float>] [--latency <float>] [--steer_limit <float>] [--help] \n\n");
-		printf("port : os port to bind socket. range(1024-65535) default: 5555\n");
-		printf("iter : number of steps to forward simulate car path. range(1-100) default: 15\n");
-		printf("dt : time between steps of simulated car path. range(0.0001 - 1.0) default: 0.1 seconds\n");
-		printf("mph : desired speed in miles per hour (0.001, 100) default:10 mph\n");
-		printf("latency : estimated delay in control before change applied (0.001, 100) default:0.1 seconds\n");
-		printf("steer_limit : degree range in steering (10, 90) default:15 degrees\n\n");
+    printf("Usage: mpc_zmq [--port <int>] [--iter <int>] [--dt <float>] [--mph <float>] [--latency <float>] [--steer_limit <float>] [--debug] [--help] \n\n");
+		printf("port:       os port to bind socket. range(1024-65535)                            default: 5555\n");
+		printf("iter:       number of steps to forward simulate car path. range(1-100)           default: 15\n");
+		printf("dt:         time between steps of simulated car path. range(0.0001 - 1.0)        default: 0.1 seconds\n");
+		printf("mph:        desired speed in miles per hour (0.001, 100)                         default: 10 mph\n");
+		printf("latency:    estimated delay in control before change applied (0.001, 100)        default: 0.1 seconds\n");
+		printf("steer_limit: degree range in steering (10, 90)                                   default: 15 degrees\n");
+    printf("debug:      emit additional output in json for path info.                        default: false\n\n");
 		printf("Summary:\n");
 		printf("This will use zero message queue to listen for json telemetry, then solve the given path for the optimal next steering and throttle controls.\n");
-		printf("The json input telemetry should take the form { event: telemetry { ptsx[], ptsy[], x, y, psi, speed } }\n");
-		printf("The json return takes the form { control : { steering, throttle } } \n");
+		printf("The json input telemetry should take the form { ptsx[], ptsy[], x, y, psi, speed }\n");
+		printf("The json return takes the form { steering, throttle } \n");
 }
 
 int main(int argc, char** argv) {
@@ -104,6 +105,7 @@ int main(int argc, char** argv) {
 		float mph = 50.0f;
 		float latency = 0.1f;
 		float steer_limit = 15.0f;
+    bool debug = false;
 
 		for(int i = 1; i < argc; i++)
 		{
@@ -121,22 +123,22 @@ int main(int argc, char** argv) {
 				{
 				    lookAheadDt = atof(argv[i + 1]); i++;
 				}
-
 				else if (strcmp(arg, "--mph") == 0 && i < argc - 1)
 				{
 				    mph = atof(argv[i + 1]); i++;
 				}
-
 				else if (strcmp(arg, "--latency") == 0 && i < argc - 1)
 				{
 				    latency = atof(argv[i + 1]); i++;
 				}
-
 				else if (strcmp(arg, "--steer_limit") == 0 && i < argc - 1)
 				{
 				    steer_limit = atof(argv[i + 1]); i++;
 				}
-
+				else if (strcmp(arg, "--debug") == 0)
+				{
+				    debug = true;
+				}
 				else if (strcmp(arg, "--help") == 0 || strcmp(arg, "-h") == 0)
 				{
 				    show_usage();
@@ -180,14 +182,15 @@ int main(int argc, char** argv) {
 
       string sdata = string(data).substr(0, length);
       auto j = json::parse(sdata);
+      //cout << j << std::endl;
       
         // j[0] is the data JSON object
-        vector<double> ptsx = j[0]["ptsx"];
-        vector<double> ptsy = j[0]["ptsy"];
-        double px = j[0]["x"];
-        double py = j[0]["y"];
-        double psi = j[0]["psi"];
-        double v = j[0]["speed"];
+        vector<double> ptsx = j["ptsx"];
+        vector<double> ptsy = j["ptsy"];
+        double px = j["x"];
+        double py = j["y"];
+        double psi = j["psi"];
+        double v = j["speed"];
 
         //Transform incoming positions and rotations of car path so that the car starts at the origin
         //and the path extends along the x axis. This helps with the fit function because we have one and only
@@ -236,10 +239,55 @@ int main(int argc, char** argv) {
         // Otherwise the values will be in between [-deg2rad(25), deg2rad(25] instead of [-1, 1].
         msgJson["steering"] = steer_value;
         msgJson["throttle"] = throttle_value;
-       
-        auto msg = "[\"control\"," + msgJson.dump() + "]";
 
-				cout << msg << "\n";
+
+        if(debug)
+        {
+            //Display the MPC predicted trajectory 
+            vector<double> mpc_x_vals;
+            vector<double> mpc_y_vals;
+
+            //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
+            // the points in the simulator are connected by a Green line
+            //skip the first two vars which are our solution steering and throttle
+            for(int i = 2; i < vars.size(); i++)
+            {
+                if(i % 2 == 0)
+                {
+                  mpc_x_vals.push_back(vars[i]);
+                }
+                else
+                {
+                  mpc_y_vals.push_back(vars[i]);
+                }
+            }
+
+            msgJson["mpc_x"] = mpc_x_vals;
+            msgJson["mpc_y"] = mpc_y_vals;
+
+            //Display the waypoints/reference line
+            vector<double> next_x_vals;
+            vector<double> next_y_vals;
+
+            //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
+            // the points in the simulator are connected by a Yellow line
+
+            double num_points = mpc.m_LookAheadIter;
+
+            for(int i = 1; i < num_points; i++)
+            {
+                double x_val = i * 5;
+                next_x_vals.push_back(x_val);
+                next_y_vals.push_back(polyeval(coeffs, x_val));
+            }
+
+            msgJson["next_x"] = next_x_vals;
+            msgJson["next_y"] = next_y_vals;
+        }
+       
+        auto msg = msgJson.dump();
+
+				//cout << msg << "\n";
  				
 				//  Send reply back to client
         zmq::message_t reply (msg.size());
